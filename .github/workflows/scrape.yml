@@ -1,0 +1,72 @@
+name: Scrape bdlaws.minlaw.gov.bd
+
+# ম্যানুয়ালি GitHub-এর "Actions" ট্যাব থেকে "Run workflow" বাটনে ক্লিক করে চালাতে হবে
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "কোন ধাপ চালাবেন"
+        required: true
+        default: "acts"
+        type: choice
+        options:
+          - volumes
+          - acts
+      resume:
+        description: "আগে যা হয়ে গেছে বাদ দিয়ে চালাবে (acts ধাপের জন্য)"
+        required: false
+        default: true
+        type: boolean
+
+# ধাপ ২ (acts) হাজার হাজার আইনের জন্য কয়েক ঘণ্টা লাগতে পারে,
+# GitHub free plan-এ public repo-র জন্য এক রানে সর্বোচ্চ ৬ ঘণ্টা (৩৬০ মিনিট) সময় পাওয়া যায়
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write   # রেজাল্ট রিপোতে commit/push করার জন্য দরকার
+
+    steps:
+      - name: রিপো চেকআউট করো
+        uses: actions/checkout@v4
+
+      - name: Python সেটআপ করো
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: প্রয়োজনীয় লাইব্রেরি ইনস্টল করো
+        run: pip install requests beautifulsoup4
+
+      - name: স্ক্র্যাপার চালাও (volumes)
+        if: ${{ inputs.stage == 'volumes' }}
+        run: python scripts/scrape_bdlaws.py --stage volumes
+
+      - name: স্ক্র্যাপার চালাও (acts, resume সহ)
+        if: ${{ inputs.stage == 'acts' && inputs.resume == 'true' }}
+        run: python scripts/scrape_bdlaws.py --stage acts --resume
+
+      - name: স্ক্র্যাপার চালাও (acts, নতুন করে)
+        if: ${{ inputs.stage == 'acts' && inputs.resume == 'false' }}
+        run: python scripts/scrape_bdlaws.py --stage acts
+
+      - name: ফলাফল কমিট ও পুশ করো
+        run: |
+          git config user.name "bdlaws-scraper-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add bdlaws_data/
+          if git diff --cached --quiet; then
+            echo "নতুন কোনো পরিবর্তন নেই, কমিট করার কিছু নেই।"
+          else
+            git commit -m "bdlaws data update (stage: ${{ inputs.stage }}) [skip ci]"
+            git push
+          fi
+
+      - name: আংশিক অগ্রগতি আপলোড করো (রান ব্যর্থ হলেও)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bdlaws-data-partial
+          path: bdlaws_data/
+          retention-days: 7
